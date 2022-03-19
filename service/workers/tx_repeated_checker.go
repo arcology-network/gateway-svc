@@ -5,6 +5,7 @@ import (
 	"github.com/arcology-network/component-lib/actor"
 	"github.com/arcology-network/component-lib/log"
 	"github.com/arcology-network/component-lib/storage"
+	gatewayTypes "github.com/arcology-network/gateway-svc/service/types"
 )
 
 type TxRepeatedChecker struct {
@@ -31,21 +32,26 @@ func (r *TxRepeatedChecker) OnStart() {
 func (r *TxRepeatedChecker) OnMessageArrived(msgs []*actor.Message) error {
 	for _, v := range msgs {
 		switch v.Name {
-		case actor.MsgTxLocals:
-			data := v.Data.([][]byte)
+		case actor.MsgTxLocalsUnChecked:
+			data := v.Data.(*gatewayTypes.TxsPack)
 			r.checkRepeated(data, types.TxFrom_Local)
 		case actor.MsgTxRemotes:
-			data := v.Data.([][]byte)
-			r.checkRepeated(data, types.TxFrom_Remote)
+			pack := &gatewayTypes.TxsPack{
+				Txs: v.Data.([][]byte),
+			}
+			r.checkRepeated(pack, types.TxFrom_Remote)
 		case actor.MsgTxBlocks:
-			data := v.Data.([][]byte)
-			r.checkRepeated(data, types.TxFrom_Block)
+			pack := &gatewayTypes.TxsPack{
+				Txs: v.Data.([][]byte),
+			}
+			r.checkRepeated(pack, types.TxFrom_Block)
 		}
 	}
 	return nil
 }
 
-func (r *TxRepeatedChecker) checkRepeated(txs [][]byte, from byte) {
+func (r *TxRepeatedChecker) checkRepeated(txspack *gatewayTypes.TxsPack, from byte) {
+	txs := txspack.Txs
 	txLen := len(txs)
 	checkedTxs := make([][]byte, 0, txLen)
 	logid := r.AddLog(log.LogLevel_Debug, "checkRepeated")
@@ -61,7 +67,20 @@ func (r *TxRepeatedChecker) checkRepeated(txs [][]byte, from byte) {
 			checkedTxs = append(checkedTxs, sendingTx)
 		}
 	}
+	//to other node with consensus
+	if from == types.TxFrom_Local {
+		r.MsgBroker.Send(actor.MsgTxLocals, txs)
+	}
 
+	//to tpp with rpc
+	if txspack.TxHashChan != nil {
+		r.MsgBroker.Send(actor.MsgTxLocalsRpc, &gatewayTypes.TxsPack{
+			Txs:        checkedTxs,
+			TxHashChan: txspack.TxHashChan,
+		})
+		return
+	}
+	//to tpp with kafka
 	sendingTxs := make([][]byte, 0, r.maxSize)
 	for i := range checkedTxs {
 		if len(sendingTxs) >= r.maxSize {

@@ -3,9 +3,12 @@ package workers
 import (
 	"context"
 
+	ethCommon "github.com/arcology-network/3rd-party/eth/common"
 	"github.com/arcology-network/common-lib/common"
 	"github.com/arcology-network/common-lib/types"
 	"github.com/arcology-network/component-lib/actor"
+	evmCommon "github.com/arcology-network/evm/common"
+	gatewayTypes "github.com/arcology-network/gateway-svc/service/types"
 )
 
 type LocalReceiver struct {
@@ -30,10 +33,28 @@ func (lr *LocalReceiver) ReceivedTransactions(ctx context.Context, args *types.S
 	txLen := len(args.Txs)
 	checkingtxs := make([][]byte, txLen)
 	common.ParallelWorker(txLen, lr.Concurrency, lr.txWorker, args.Txs, &checkingtxs)
-
-	lr.MsgBroker.Send(actor.MsgTxLocals, checkingtxs)
+	txsPack := gatewayTypes.TxsPack{
+		Txs: checkingtxs,
+	}
+	lr.MsgBroker.Send(actor.MsgTxLocalsUnChecked, &txsPack)
 
 	reply.Status = 0
+	return nil
+}
+
+func (lr *LocalReceiver) SendRawTransaction(ctx context.Context, args *types.RawTransactionArgs, reply *types.RawTransactionReply) error {
+	txLen := 1
+	checkingtxs := make([][]byte, txLen)
+	common.ParallelWorker(txLen, lr.Concurrency, lr.txWorker, [][]byte{args.Txs}, &checkingtxs)
+	txsPack := gatewayTypes.TxsPack{
+		Txs:        checkingtxs,
+		TxHashChan: make(chan ethCommon.Hash, 1),
+	}
+	lr.MsgBroker.Send(actor.MsgTxLocalsUnChecked, &txsPack)
+
+	hash := <-txsPack.TxHashChan
+
+	reply.TxHash = evmCommon.BytesToHash(hash.Bytes())
 	return nil
 }
 

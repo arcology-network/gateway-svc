@@ -47,12 +47,12 @@ func (cfg *Config) Start() {
 
 	//01 kafkaDownloader
 	receiveMseeages := []string{
-		actor.MsgTxLocals,
+		//actor.MsgTxLocals,
 		actor.MsgTxRemotes,
 	}
 	receiveTopics := []string{
 		viper.GetString("remote-txs"),
-		viper.GetString("local-txs"),
+		//viper.GetString("local-txs"),
 	}
 	kafkaDownloader := actor.NewActor(
 		"kafkaDownloader",
@@ -82,7 +82,7 @@ func (cfg *Config) Start() {
 		broker,
 		[]string{actor.MsgStartSub},
 		[]string{
-			actor.MsgTxLocals,
+			actor.MsgTxLocalsUnChecked,
 		},
 		[]int{100},
 		receiveWorker,
@@ -94,26 +94,43 @@ func (cfg *Config) Start() {
 		"txRepeatedChecker",
 		broker,
 		[]string{
-			actor.MsgTxLocals,
+			actor.MsgTxLocalsUnChecked,
 			actor.MsgTxBlocks,
 			actor.MsgTxRemotes,
 		},
 		[]string{
 			actor.MsgCheckedTxs,
+			actor.MsgTxLocals,
+			actor.MsgTxLocalsRpc,
 		},
 		[]int{100, 100, 100},
 		workers.NewTxRepeatedChecker(cfg.concurrency, cfg.groupid, viper.GetInt("txnums"), viper.GetInt("waits")),
 	)
 	txRepeatedChecker.Connect(streamer.NewDisjunctions(txRepeatedChecker, 100))
 
+	//05 rpc_client
+	rpcClient := actor.NewActor(
+		"rpcClient",
+		broker,
+		[]string{
+			actor.MsgTxLocalsRpc,
+		},
+		[]string{},
+		[]int{100},
+		workers.NewRpcClient(cfg.concurrency, cfg.groupid, []string{viper.GetString("zkUrl")}),
+	)
+	rpcClient.Connect(streamer.NewDisjunctions(rpcClient, 100))
+
 	//04 kafkaUploader
 	relations := map[string]string{}
 	relations[actor.MsgCheckedTxs] = viper.GetString("checked-txs")
+	relations[actor.MsgTxLocals] = viper.GetString("local-txs")
 	kafkaUploader := actor.NewActor(
 		"kafkaUploader",
 		broker,
 		[]string{
 			actor.MsgCheckedTxs,
+			actor.MsgTxLocals,
 		},
 		[]string{},
 		[]int{100},
